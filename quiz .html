@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quiz Shetrompo</title>
+<style>
+:root{--bg1:#1b1f6b;--bg2:#4a6cf0;--ink:#1b1f6b}
+*{box-sizing:border-box;margin:0}
+body{font-family:system-ui,Segoe UI,sans-serif;color:#fff;background:linear-gradient(160deg,var(--bg2),var(--bg1)) fixed;min-height:100vh;padding:24px 14px 40px}
+main{max-width:760px;margin:0 auto;text-align:center}
+h1{font-size:2rem;margin-bottom:14px}h2{font-size:1.15rem;margin-bottom:10px}
+p{margin:8px 0}.meta{opacity:.85}.big{font-size:1.4rem;font-weight:700}
+.box{background:#ffffff1f;border-radius:16px;padding:16px;margin:14px 0}
+.btn{display:inline-block;background:#fff;color:var(--ink);border:0;border-radius:12px;padding:12px 18px;font-size:1rem;font-weight:700;cursor:pointer;margin:6px 4px}
+.btn:disabled{opacity:.45;cursor:not-allowed}.ghost{background:transparent;color:#fff;border:2px solid #fff}
+input,select{font-size:1rem;padding:11px;border-radius:10px;border:0;margin:4px;max-width:100%}
+input[type=file]{display:none}
+.code{font-size:3.4rem;font-weight:800;letter-spacing:.2em}
+.qr{width:200px;height:200px;background:#fff;padding:8px;border-radius:12px;margin:10px auto}
+.q{margin:16px 0}.barw{height:10px;background:#ffffff40;border-radius:9px;overflow:hidden}
+#bar{height:100%;width:100%;background:#ffe27a}
+.opts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.op{border:0;border-radius:12px;color:#fff;font-size:1.05rem;font-weight:700;padding:20px 10px;min-height:84px;cursor:pointer;display:block}
+.op b{margin-right:6px}.op.dim{opacity:.35}.cn{display:block;font-size:1.3rem}
+.lb{list-style:none;padding:0}.lb li{background:#ffffff26;border-radius:10px;padding:10px 14px;margin:6px 0;display:flex;justify-content:space-between;font-weight:700}
+#top{max-width:760px;margin:0 auto 10px;display:flex;justify-content:flex-end;align-items:center;gap:8px;font-size:.9rem}#top[hidden]{display:none}#top .btn{padding:6px 12px;margin:0;font-size:.85rem}
+@media(max-width:480px){.opts{grid-template-columns:1fr}.code{font-size:2.6rem}}
+</style>
+</head>
+<body>
+<div id="top" hidden><span id="who"></span> <button class="btn ghost" id="lo">Salir</button></div>
+<main id="app"></main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
+const SESION_MIN=30; // minutos que dura la sesión
+const app=$("#app"),COL=["#e21b3c","#1368ce","#d89e00","#26890c"],SH=["▲","◆","●","■"],LET="ABCD",KEY="quizShetro";
+let Q=[];try{Q=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(Q))}catch(e){}};
+const show=h=>{app.innerHTML=h;window.scrollTo(0,0)};
+const pts=(ok,left,tot)=>ok?Math.round(500+500*Math.max(0,left)/tot):0;
+const optsHtml=o=>`<div class="opts">`+o.map((t,i)=>`<button class="op" data-i="${i}" style="background:${COL[i]}"><b>${SH[i]}</b>${esc(t)}</button>`).join("")+`</div>`;
+const barSet=(l,t)=>{const b=$("#bar");if(b)b.style.width=(l/t*100)+"%"};
+function timer(sec,onEnd){const t0=Date.now();const id=setInterval(()=>{const l=sec-(Date.now()-t0)/1000;if(l<=0){clearInterval(id);barSet(0,sec);onEnd()}else barSet(l,sec)},100);return()=>clearInterval(id)}
+function qrSvg(t){try{const q=qrcode(0,"M");q.addData(t);q.make();return q.createSvgTag({cellSize:6,margin:0,scalable:true})}catch(e){return""}}
+/*PDF*/
+const fname=s=>String(s).replace(/[^\w-]+/g,"_"),cl=s=>String(s).replace(/[“”]/g,'"').replace(/[‘’]/g,"'").replace(/[–—]/g,"-").replace(/[^\x00-\xFF]/g,"?");
+function pdf(title,lines,file){if(!window.jspdf)return alert("No cargó la librería de PDF. Revisa tu internet.");
+ const d=new window.jspdf.jsPDF({unit:"mm",format:"letter"});let y=20;d.setFont("helvetica","bold");d.setFontSize(16);d.text(cl(title),15,y);y+=10;d.setFontSize(11);
+ lines.forEach(l=>{d.setFont("helvetica",l.b?"bold":"normal");d.splitTextToSize(cl(l.t),180).forEach(t=>{if(y>270){d.addPage();y=20}d.text(t,15,y);y+=6});y+=l.gap||0});d.save(file)}
+function pdfQuiz(qz){if(!qz)return;const L=[];qz.qs.forEach((q,k)=>{L.push({t:(k+1)+". "+q.q,b:1});q.o.forEach((o,i)=>L.push({t:"   "+LET[i]+") "+o}));L.push({t:"Respuesta correcta: "+LET[q.c]+") "+q.o[q.c],gap:4})});
+ pdf("Quiz: "+qz.name,L,"quiz-"+fname(qz.name)+".pdf")}
+const who=()=>{const x=ses();return x?x.user:"invitado"},now=()=>new Date().toLocaleString("es-MX");
+/*ENDPDF*/
+/*PARSE*/
+function norm(x){if(!x||!x.q||!Array.isArray(x.o))return null;const o=x.o.map(s=>String(s==null?"":s).trim());const c=Number(x.c);
+ if(o.length<2||o.length>4||o.some(s=>!s)||!Number.isInteger(c)||c<0||c>=o.length)return null;
+ return{q:String(x.q).trim(),o,c,t:Math.min(120,Math.max(5,Number(x.t)||20))}}
+function parseRows(rows){const out=[];rows.forEach((r,k)=>{r=r.map(x=>String(x==null?"":x).trim());if(k===0&&/pregunta/i.test(r[0]))return;
+ const o=r.slice(1,5);while(o.length&&!o[o.length-1])o.pop();const c=r[5].toUpperCase();
+ let ci=c.length===1?LET.indexOf(c):-1;if(ci<0&&/^[1-4]$/.test(c))ci=+c-1;if(ci<0&&c)ci=o.findIndex(x=>x.toUpperCase()===c);
+ const n=norm({q:r[0],o,c:ci,t:r[6]});if(n)out.push(n)});return out}
+/*END*/
+async function importFile(f){const ext=f.name.split(".").pop().toLowerCase();let qs=[];
+ try{if(ext==="json"){const a=JSON.parse(await f.text());qs=(Array.isArray(a)?a:a.qs||[]).map(norm).filter(Boolean)}
+ else{const wb=XLSX.read(await f.arrayBuffer(),{type:"array"});qs=parseRows(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:""}))}}
+ catch(e){return alert("No pude leer el archivo.")}
+ if(!qs.length)return alert("No encontré preguntas válidas. Descarga la plantilla para ver el formato.");
+ const name=f.name.replace(/\.[^.]+$/,"");Q=Q.filter(x=>x.name!==name);Q.push({name,qs});save();home(Q.length-1)}
+function tpl(){const ws=XLSX.utils.aoa_to_sheet([["Pregunta","A","B","C","D","Correcta (A-D)","Segundos"],["¿Capital de México?","CDMX","Lima","Bogotá","Quito","A",20],["¿Cuánto es 2+2?","3","4","5","","B",15]]);
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Preguntas");XLSX.writeFile(wb,"plantilla-quiz.xlsx")}
+/*AUTH*/
+const enc=new TextEncoder(),b64=u=>btoa(String.fromCharCode(...new Uint8Array(u))),rnd=n=>b64(crypto.getRandomValues(new Uint8Array(n)));
+async function pbk(pw,salt){const k=await crypto.subtle.importKey("raw",enc.encode(pw),"PBKDF2",false,["deriveBits"]);
+ return b64(await crypto.subtle.deriveBits({name:"PBKDF2",salt:enc.encode(salt),iterations:150000,hash:"SHA-256"},k,256))}
+const users=()=>{try{return JSON.parse(localStorage.getItem("qUsers")||"{}")}catch(e){return{}}};
+function ses(){try{const x=JSON.parse(localStorage.getItem("qSes"));return x&&x.exp>Date.now()?x:null}catch(e){return null}}
+const unlocked=x=>!!x&&sessionStorage.getItem("qOk")===x.id;
+function topBar(){const x=ses(),ok=unlocked(x);$("#top").hidden=!ok;if(!ok)return;const l=Math.max(0,Math.round((x.exp-Date.now())/1000));
+ $("#who").textContent=x.user+" · "+(l?"sesión: "+Math.floor(l/60)+":"+String(l%60).padStart(2,"0"):"sesión vencida")}
+$("#lo").onclick=()=>bye("Sesión cerrada.");setInterval(topBar,1000);
+function bye(msg){localStorage.removeItem("qSes");sessionStorage.removeItem("qOk");topBar();authScreen("in",msg)}
+function authScreen(tab,msg){tab=tab||"in";
+ show(`<h1>Acceso</h1><p><button class="btn ${tab==="in"?"":"ghost"}" id="t1">Ya tengo cuenta</button><button class="btn ${tab==="up"?"":"ghost"}" id="t2">Usuario nuevo</button></p>
+ <div class="box"><input id="u" placeholder="Usuario" maxlength="20" autocomplete="username"><br><input id="p" type="password" placeholder="Contraseña" autocomplete="${tab==="in"?"current-password":"new-password"}">
+ ${tab==="up"?`<br><input id="p2" type="password" placeholder="Repite la contraseña" autocomplete="new-password">`:""}
+ <p id="msg" class="meta">${esc(msg||"")}</p><button class="btn" id="ok">${tab==="in"?"Entrar":"Registrarme"}</button><button class="btn ghost" id="bk">Volver</button></div>`);
+ const say=t=>{$("#msg").textContent=t};
+ $("#t1").onclick=()=>authScreen("in");$("#t2").onclick=()=>authScreen("up");$("#bk").onclick=()=>home();
+ $("#ok").onclick=async()=>{if(!window.crypto||!crypto.subtle)return say("Este navegador no permite cifrar aquí. Abre la página con https.");
+  const u=$("#u").value.trim(),p=$("#p").value,k=u.toLowerCase();
+  if(tab==="up"){if(!/^[\w.-]{3,20}$/.test(u))return say("Usuario: de 3 a 20 letras, números, punto, guion o guion bajo.");
+   if(p.length<6)return say("La contraseña debe tener mínimo 6 caracteres.");if(p!==$("#p2").value)return say("Las contraseñas no coinciden.");
+   const US=users();if(US[k])return say("Ese usuario ya existe.");const sl=rnd(16);US[k]={u,s:sl,h:await pbk(p,sl)};
+   try{localStorage.setItem("qUsers",JSON.stringify(US))}catch(e){return say("No pude guardar la cuenta en este navegador.")}
+   return authScreen("in","Cuenta creada. Ahora inicia sesión.")}
+  if(Date.now()<+sessionStorage.getItem("qlock"))return say("Demasiados intentos. Espera un minuto.");
+  const r=users()[k];if(!r||await pbk(p,r.s)!==r.h){const f=(+sessionStorage.getItem("qf")||0)+1;sessionStorage.setItem("qf",f);
+   if(f>=5){sessionStorage.setItem("qlock",Date.now()+60000);sessionStorage.setItem("qf",0)}return say("Usuario o contraseña incorrectos.")}
+  startSession(r.u)}}
+async function startSession(u){const pin=String(crypto.getRandomValues(new Uint32Array(1))[0]%10000).padStart(4,"0"),sl=rnd(16),id=rnd(9),exp=Date.now()+SESION_MIN*60000;
+ localStorage.setItem("qSes",JSON.stringify({id,user:u,exp,s:sl,h:await pbk(pin,sl)}));sessionStorage.setItem("qOk",id);sessionStorage.setItem("qf",0);
+ const hr=new Date(exp).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"});
+ show(`<h1>¡Hola, ${esc(u)}!</h1><p>Tu código de sesión de 4 dígitos. Sirve para volver a entrar sin contraseña:</p><p class="code">${pin}</p><div class="qr">${qrSvg(pin)}</div>
+ <p class="meta">Vale ${SESION_MIN} minutos (hasta las ${hr}). Se guarda cifrado en este navegador.</p><button class="btn" id="c">Continuar</button>`);topBar();$("#c").onclick=()=>home()}
+function pinScreen(x,msg){show(`<h1>Sesión activa</h1><p>Hola, ${esc(x.user)}. Escribe tu código de 4 dígitos.</p><div class="box"><input id="pin" type="password" inputmode="numeric" maxlength="4" placeholder="••••" style="text-align:center;font-size:1.6rem;width:6em"><p id="msg" class="meta">${esc(msg||"")}</p><button class="btn" id="ok">Entrar</button><button class="btn ghost" id="out">Cerrar sesión</button></div>`);
+ $("#out").onclick=()=>bye("Sesión cerrada.");
+ $("#ok").onclick=async()=>{if(!window.crypto||!crypto.subtle)return;if(await pbk($("#pin").value,x.s)===x.h){sessionStorage.setItem("qOk",x.id);sessionStorage.setItem("qf",0);home()}
+  else{const f=(+sessionStorage.getItem("qf")||0)+1;sessionStorage.setItem("qf",f);if(f>=3){sessionStorage.setItem("qf",0);bye("Demasiados intentos. Inicia sesión otra vez.")}else $("#msg").textContent="Código incorrecto ("+f+"/3)."}}}
+/*ENDAUTH*/
+function home(sel){const m=location.hash.match(/join=(\d{4})/),x=ses(),ok=unlocked(x);topBar();
+ if(!ok&&x&&!m)return pinScreen(x);if(sel==null)sel=Q.length-1;
+ const jb=`<div class="box" id="jb"><h2>${ok?"3. ":""}Unirme a una sala</h2><input id="code" inputmode="numeric" maxlength="4" placeholder="Código" value="${m?m[1]:""}"><input id="nick" maxlength="14" placeholder="Tu nombre"><button class="btn" id="join">Entrar</button></div>`;
+ show(`<h1>Quiz Shetrompo</h1>`+(ok?`<div class="box"><h2>1. Tus preguntas</h2>
+ ${Q.length?`<select id="sel">${Q.map((q,i)=>`<option value="${i}" ${i===sel?"selected":""}>${esc(q.name)} (${q.qs.length})</option>`).join("")}</select> <button class="btn ghost" id="del">Eliminar</button>`:"<p>Aún no tienes preguntas.</p>"}
+ <p><label class="btn" for="file">Importar Excel / CSV / JSON</label><input type="file" id="file" accept=".xlsx,.xls,.csv,.json"> <button class="btn ghost" id="tpl">Descargar plantilla</button>${Q.length?`<button class="btn ghost" id="pdfq">PDF del quiz</button>`:""}</p></div>
+ <div class="box"><h2>2. Jugar</h2><button class="btn" id="solo" ${Q.length?"":"disabled"}>Jugar solo</button><button class="btn" id="host" ${Q.length?"":"disabled"}>Crear sala (anfitrión)</button></div>`
+ :`<div class="box"><h2>Crear mis quizzes</h2><p>Para importar preguntas, jugar solo o crear una sala necesitas una cuenta.</p><button class="btn" id="lg">Iniciar sesión / Registrarme</button></div>`)+jb);
+ if(ok){const cur=()=>Q[+($("#sel")||{}).value];
+  $("#file").onchange=e=>e.target.files[0]&&importFile(e.target.files[0]);$("#tpl").onclick=tpl;if($("#pdfq"))$("#pdfq").onclick=()=>pdfQuiz(cur());
+  if($("#del"))$("#del").onclick=()=>{if(confirm("¿Eliminar este quiz?")){Q.splice(+$("#sel").value,1);save();home()}};
+  $("#solo").onclick=()=>solo(cur());$("#host").onclick=()=>host(cur())}
+ else $("#lg").onclick=()=>authScreen();
+ $("#join").onclick=()=>{const c=$("#code").value.trim(),n=$("#nick").value.trim();if(!/^\d{4}$/.test(c)||!n)return alert("Escribe el código de 4 dígitos y tu nombre.");join(c,n)};
+ if(m)$("#nick").focus()}
+function solo(qz){let i=0,score=0;const n=qz.qs.length,res=[];
+ (function next(){if(i>=n){show(`<h1>Fin</h1><p class="big">${score} puntos</p><button class="btn" id="pd">Descargar PDF</button><button class="btn ghost" id="h">Inicio</button>`);$("#h").onclick=()=>home();
+  $("#pd").onclick=()=>pdf("Resultados: "+qz.name,[{t:"Usuario: "+who()},{t:"Fecha: "+now()},{t:"Puntos: "+score,b:1,gap:4}].concat(res.map((r,k)=>({t:(k+1)+". "+r.q+" - "+(r.ok?"Correcta":"Incorrecta")+" (+"+r.p+")"}))),"resultados-"+fname(qz.name)+".pdf");return}
+ const q=qz.qs[i];let done=false,left=q.t;
+ show(`<p class="meta">Pregunta ${i+1}/${n} · ${score} pts</p><div class="barw"><div id="bar"></div></div><h2 class="q big">${esc(q.q)}</h2>${optsHtml(q.o)}<div id="fb"></div>`);
+ const t0=Date.now(),stop=timer(q.t,()=>pick(-1));
+ function pick(a){if(done)return;done=true;stop();left=q.t-(Date.now()-t0)/1000;const ok=a===q.c,p=pts(ok,left,q.t);score+=p;res.push({q:q.q,ok,p});
+  $$(".op").forEach(b=>{b.disabled=true;if(+b.dataset.i!==q.c)b.classList.add("dim")});
+  $("#fb").innerHTML=`<p class="big">${ok?"¡Correcto! +"+p:a<0?"Se acabó el tiempo":"Incorrecto"}</p><button class="btn" id="nx">${i+1<n?"Siguiente":"Ver resultado"}</button>`;
+  $("#nx").onclick=()=>{i++;next()}}
+ $$(".op").forEach(b=>b.onclick=()=>pick(+b.dataset.i))})()}
+function host(qz){if(typeof Peer==="undefined")return alert("No cargó la librería de conexión. Revisa tu internet.");
+ const n=qz.qs.length;let code,peer,P={},cur=-1,acc=false,started=false,opened=false,stopT=null,t0=0;
+ const act=()=>Object.values(P).filter(p=>!p.gone),rank=()=>Object.values(P).sort((a,b)=>b.score-a.score);
+ const all=m=>Object.values(P).forEach(p=>{try{p.c.send(m)}catch(e){}});
+ const fail=m=>{show(`<h1>Sin conexión</h1><p>${esc(m)}</p><button class="btn" id="h">Inicio</button>`);$("#h").onclick=()=>home()};
+ const exit=()=>{try{peer.destroy()}catch(e){}home()};
+ function boot(){code=String(Math.floor(1000+Math.random()*9000));opened=false;peer=new Peer("kzshetro"+code);
+  peer.on("open",()=>{opened=true;lobby()});
+  peer.on("error",e=>{if(opened)return;if(e.type==="unavailable-id")boot();else fail("No pude crear la sala ("+e.type+").")});
+  peer.on("connection",c=>{c.on("data",d=>onData(c,d));c.on("close",()=>{const p=P[c.peer];if(!p)return;if(started)p.gone=true;else delete P[c.peer];lobby()})})}
+ function onData(c,d){if(!d||typeof d!=="object")return;
+  if(d.t==="join"){if(started)return c.send({t:"err",m:"La partida ya empezó."});
+   let nm=String(d.name||"Jugador").slice(0,14).trim()||"Jugador";const base=nm,names=Object.values(P).map(p=>p.name);let k=2;while(names.includes(nm))nm=base+" "+k++;
+   P[c.peer]={c,name:nm,score:0,a:null,ms:0,gone:false,last:0,ok:false};c.send({t:"wait",name:nm});lobby()}
+  else if(d.t==="ans"){const p=P[c.peer],a=Number(d.a);if(!p||!acc||d.i!==cur||p.a!==null||!Number.isInteger(a)||a<0||a>3)return;
+   p.a=a;p.ms=Date.now()-t0;const r=act().filter(x=>x.a!==null).length;if($("#cnt"))$("#cnt").textContent=r;if(r>=act().length)reveal()}}
+ function lobby(){if(started||!opened)return;const ps=act();
+  show(`<h1>Sala lista</h1><p>Entra a <b>${esc(location.host+location.pathname)}</b> y escribe el código</p><p class="code">${code}</p><div class="qr">${qrSvg(location.origin+location.pathname+"#join="+code)}</div><p class="meta">o escanea el QR</p>
+  <div class="box"><h2>Jugadores (${ps.length})</h2><p>${ps.length?ps.map(p=>esc(p.name)).join(" · "):"Esperando jugadores…"}</p></div>
+  <button class="btn" id="go" ${ps.length?"":"disabled"}>Empezar</button><button class="btn ghost" id="x">Cancelar</button>`);
+  $("#go").onclick=()=>{started=true;nextQ()};$("#x").onclick=exit}
+ function nextQ(){cur++;if(cur>=n)return end();const q=qz.qs[cur];Object.values(P).forEach(p=>p.a=null);acc=true;t0=Date.now();
+  all({t:"q",i:cur,n,q:q.q,o:q.o,time:q.t});
+  show(`<p class="meta">Pregunta ${cur+1}/${n} · <span id="cnt">0</span>/${act().length} respondieron</p><div class="barw"><div id="bar"></div></div><h2 class="q big">${esc(q.q)}</h2>${optsHtml(q.o)}`);
+  $$(".op").forEach(b=>b.style.cursor="default");stopT=timer(q.t,reveal)}
+ function reveal(){if(!acc)return;acc=false;if(stopT)stopT();const q=qz.qs[cur],cn=q.o.map(()=>0);
+  Object.values(P).forEach(p=>{if(p.a!==null)cn[p.a]++;p.ok=p.a===q.c;p.last=pts(p.ok,q.t-p.ms/1000,q.t);p.score+=p.last});
+  const r=rank();r.forEach((p,k)=>{try{p.c.send({t:"res",ok:p.ok,pts:p.last,score:p.score,rank:k+1,total:r.length,right:q.c})}catch(e){}});
+  show(`<p class="meta">Pregunta ${cur+1}/${n}</p><h2 class="q big">${esc(q.q)}</h2><div class="opts">${q.o.map((t,i)=>`<div class="op ${i===q.c?"":"dim"}" style="background:${COL[i]}"><b>${SH[i]}</b>${esc(t)}<span class="cn">${cn[i]}</span></div>`).join("")}</div>
+  <div class="box"><h2>Posiciones</h2><ol class="lb">${r.slice(0,5).map(p=>`<li><span>${esc(p.name)}</span><span>${p.score}</span></li>`).join("")}</ol></div>
+  <button class="btn" id="nx">${cur+1<n?"Siguiente":"Ver podio"}</button>`);$("#nx").onclick=nextQ}
+ function end(){const r=rank();r.forEach((p,k)=>{try{p.c.send({t:"end",score:p.score,rank:k+1,total:r.length})}catch(e){}});
+  show(`<h1>Podio</h1><ol class="lb">${r.map((p,k)=>`<li><span>${["🥇","🥈","🥉"][k]||(k+1)+"."} ${esc(p.name)}</span><span>${p.score}</span></li>`).join("")}</ol><button class="btn" id="pd">Descargar PDF</button><button class="btn ghost" id="h">Inicio</button>`);$("#h").onclick=exit;
+  $("#pd").onclick=()=>pdf("Podio: "+qz.name,[{t:"Anfitrión: "+who()},{t:"Fecha: "+now(),gap:4}].concat(r.map((p,k)=>({t:(k+1)+". "+p.name+" - "+p.score+" puntos"}))),"podio-"+fname(qz.name)+".pdf")}
+ boot()}
+function join(code,name){if(typeof Peer==="undefined")return alert("No cargó la librería de conexión. Revisa tu internet.");
+ show(`<h1>Conectando…</h1>`);let peer=new Peer(),conn,fin=false,stopP=null,cq=-1;
+ const fail=m=>{if(stopP)stopP();show(`<h1>Ups</h1><p>${esc(m)}</p><button class="btn" id="h">Inicio</button>`);$("#h").onclick=()=>{try{peer.destroy()}catch(e){}home()}};
+ peer.on("error",e=>fail(e.type==="peer-unavailable"?"No encontré esa sala. Revisa el código.":"Error de conexión ("+e.type+")."));
+ peer.on("open",()=>{conn=peer.connect("kzshetro"+code,{reliable:true});conn.on("open",()=>conn.send({t:"join",name}));conn.on("data",msg);conn.on("close",()=>{if(!fin)fail("Se perdió la conexión con la sala.")})});
+ function msg(m){if(!m||typeof m!=="object")return;if(stopP){stopP();stopP=null}
+  if(m.t==="err")return fail(m.m);
+  if(m.t==="wait")show(`<h1>¡Listo, ${esc(m.name)}!</h1><p>Esperando a que empiece el juego…</p>`);
+  if(m.t==="q"){cq=m.i;show(`<p class="meta">Pregunta ${m.i+1}/${m.n}</p><div class="barw"><div id="bar"></div></div><h2 class="q">${esc(m.q)}</h2>${optsHtml(m.o)}<p id="st"></p>`);
+   $$(".op").forEach(b=>b.onclick=()=>{conn.send({t:"ans",i:cq,a:+b.dataset.i});$$(".op").forEach(x=>{x.disabled=true;if(x!==b)x.classList.add("dim")});$("#st").textContent="Respuesta enviada…"});
+   stopP=timer(m.time,()=>{})}
+  if(m.t==="res")show(`<h1>${m.ok?"¡Correcto!":"Incorrecto"}</h1><p class="big">+${m.pts}</p><p>Total: ${m.score} pts · Lugar ${m.rank} de ${m.total}</p><p class="meta">Espera la siguiente pregunta…</p>`);
+  if(m.t==="end"){fin=true;show(`<h1>¡Terminó!</h1><p class="big">Lugar ${m.rank} de ${m.total}</p><p>${m.score} puntos</p><button class="btn" id="h">Inicio</button>`);$("#h").onclick=()=>{try{peer.destroy()}catch(e){}home()}}}}
+home();
+</script>
+</body>
+</html>
